@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from database import init_db, Task; from services import get_all_tasks; print\\('OK'\\)\")",
+      "Bash(python -c \"from database import init_db; print\\('OK'\\)\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(python -c \"import sqlalchemy; print\\(sqlalchemy.__version__\\)\")",
+      "Bash(/c/Users/芳賀健吾/AppData/Local/Python/pythoncore-3.14-64/python.exe -c \"import sqlalchemy; print\\(sqlalchemy.__version__\\)\")",
+      "Bash(/c/Users/芳賀健吾/AppData/Local/Python/pythoncore-3.14-64/python.exe -c \"from database import init_db, Task; from services import get_all_tasks; print\\('OK'\\)\")"
+    ]
+  }
+}
