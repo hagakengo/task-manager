@@ -17,7 +17,7 @@ export default function TaskForm({ initial, onSubmit, onCancel }: Props) {
   const [dueDate, setDueDate] = useState(initial?.due_date ?? "");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!title.trim()) return;
     setLoading(true);
@@ -38,7 +38,7 @@ export default function TaskForm({ initial, onSubmit, onCancel }: Props) {
           タイトル <span className="text-red-500">*</span>
         </label>
         <input
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-500"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="タスクのタイトル"
@@ -49,7 +49,7 @@ export default function TaskForm({ initial, onSubmit, onCancel }: Props) {
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">説明</label>
         <textarea
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           rows={3}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -61,7 +61,7 @@ export default function TaskForm({ initial, onSubmit, onCancel }: Props) {
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">ステータス</label>
           <select
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-500"
             value={status}
             onChange={(e) => setStatus(e.target.value as Status)}
           >
@@ -89,7 +89,7 @@ export default function TaskForm({ initial, onSubmit, onCancel }: Props) {
         <label className="block text-sm font-medium text-gray-700 mb-1">期限</label>
         <input
           type="date"
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-black focus:outline-none focus:ring-2 focus:ring-blue-500"
           value={dueDate}
           onChange={(e) => setDueDate(e.target.value)}
         />

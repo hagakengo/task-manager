@@ -1,4 +1,4 @@
-const API_BASE = "http://18.181.247.4:8000";
+const API_BASE = "http://localhost:8000";
 
 export type Status = "todo" | "in-progress" | "done";
 export type Priority = "high" | "medium" | "low";
