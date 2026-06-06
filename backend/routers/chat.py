@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import os
+import re
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -20,6 +21,18 @@ def get_db():
 
 class ChatRequest(BaseModel):
     message: str
+
+
+def detect_due_date(message: str, today: date) -> str | None:
+    tomorrow = today + timedelta(days=1)
+    next_week = today + timedelta(days=7)
+    if re.search(r'この後|今日中|今夜|今から|あとで|後で|今日|今晩|今夜中', message):
+        return str(today)
+    if re.search(r'明日|明日中|あす', message):
+        return str(tomorrow)
+    if re.search(r'今週中|今週末|今週', message):
+        return str(next_week)
+    return None
 
 
 def build_prompt(message: str, tasks: list, today: date) -> str:
@@ -43,12 +56,23 @@ def build_prompt(message: str, tasks: list, today: date) -> str:
 {{"reply": "ユーザーへの返答（日本語、簡潔に）", "actions": []}}
 
 actionsに使えるタイプ:
-- {{"type":"create","title":"タイトル","due_date":"YYYY-MM-DD or null","priority":"high/medium/low","status":"todo"}}
-- {{"type":"create","title":"タイトル","due_date":null,"priority":"medium","status":"waiting"}}
+- {{"type":"create","title":"タイトル","description":"詳細説明（任意）","due_date":"YYYY-MM-DD or null","priority":"high/medium/low","status":"todo"}}
+- {{"type":"create","title":"タイトル","description":null,"due_date":null,"priority":"medium","status":"waiting"}}
 - {{"type":"complete","task_id":数字}}
 - {{"type":"update","task_id":数字,"due_date":"YYYY-MM-DD or null","status":"todo/in-progress/done/waiting"}}
 
-ルール:
+日付変換ルール（必ず適用すること）:
+- 「この後」「今日中」「今夜」「今から」「あとで」「後で」「今日」→ due_date:"{today}"
+- 「明日」「明日中」→ due_date:"{tomorrow}"
+- 「今週中」「今週末」→ due_date:"{next_week}"
+- 「〇日まで」「〇日締め」→ 該当日付に変換
+- 日時を示す言葉が含まれる場合は必ずdue_dateを設定し、nullにしない
+
+変換例:
+- 「この後ご飯」→ {{"type":"create","title":"ご飯","due_date":"{today}","priority":"low","status":"todo"}}
+- 「明日打ち合わせ」→ {{"type":"create","title":"打ち合わせ","due_date":"{tomorrow}","priority":"medium","status":"todo"}}
+
+アクションルール:
 - 作業・確認・提出・交換などの動詞を含むフレーズはcreate
 - 「確認依頼」「問い合わせ」「回答待ち」「見積依頼」「メーカー確認」「客先確認」はstatus:waiting
 - 「完了」「終わった」「できた」「済み」はcomplete（既存タスクと照合）
@@ -67,7 +91,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
 
     client = Groq(api_key=api_key)
 
-    tasks = db.query(Task).order_by(Task.created_at.desc()).all()
+    tasks = db.query(Task).filter(Task.status != "done").order_by(Task.created_at.desc()).all()
     prompt = build_prompt(req.message, tasks, date.today())
 
     try:
@@ -85,14 +109,18 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
     except Exception as e:
         return {"reply": f"AI処理エラー: {e}", "actions_result": []}
 
+    detected_due = detect_due_date(req.message, date.today())
+
     results = []
     for action in data.get("actions", []):
         t = action.get("type")
         try:
             if t == "create":
+                due = action.get("due_date") or detected_due
                 task = Task(
                     title=action["title"],
-                    due_date=action.get("due_date"),
+                    description=action.get("description"),
+                    due_date=due,
                     priority=action.get("priority", "medium"),
                     status=action.get("status", "todo"),
                 )
@@ -105,6 +133,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
                 task = db.query(Task).filter(Task.id == action["task_id"]).first()
                 if task:
                     task.status = "done"
+                    task.completed_at = date.today().strftime("%Y-%m-%d %H:%M:%S")
                     db.commit()
                     results.append({"action": "completed", "task_id": task.id, "title": task.title})
 

@@ -11,6 +11,8 @@ export interface Task {
   priority: Priority;
   due_date: string | null;
   created_at: string;
+  completed_at: string | null;
+  archived: boolean;
 }
 
 export interface TaskCreate {
@@ -29,8 +31,9 @@ export interface TaskUpdate {
   due_date?: string;
 }
 
-export async function fetchTasks(): Promise<Task[]> {
-  const res = await fetch(`${API_BASE}/tasks`, { cache: "no-store" });
+export async function fetchTasks(includeArchived = false): Promise<Task[]> {
+  const url = includeArchived ? `${API_BASE}/tasks?include_archived=true` : `${API_BASE}/tasks`;
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to fetch tasks");
   return res.json();
 }

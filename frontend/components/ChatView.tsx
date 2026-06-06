@@ -27,28 +27,64 @@ const statusLabel: Record<string, string> = {
   todo: "未着手", "in-progress": "進行中", done: "完了", waiting: "回答待ち",
 };
 
+const STORAGE_KEY = "chat-history";
+const INITIAL_MESSAGE: Message = {
+  role: "assistant",
+  text: "こんにちは！タスクについて話しかけてください。\n例：「明日A倉庫でIND930交換」「見積提出完了」「今週のタスクは？」",
+};
+
 export default function ChatView({ onTasksChanged }: { onTasksChanged: () => void }) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      text: "こんにちは！タスクについて話しかけてください。\n例：「明日A倉庫でIND930交換」「見積提出完了」「今週のタスクは？」",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [INITIAL_MESSAGE];
+    } catch {
+      return [INITIAL_MESSAGE];
+    }
+  });
   const [input, setInput] = useState("");
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages)); } catch {}
+  }, [messages]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  function handleClear() {
+    const reset = [INITIAL_MESSAGE];
+    setMessages(reset);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(reset)); } catch {}
+  }
+
+  function handleEdit(index: number) {
+    setEditingIndex(index);
+    setInput(messages[index].text);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  function handleCancelEdit() {
+    setEditingIndex(null);
+    setInput("");
+  }
 
   async function handleSend() {
     const text = input.trim();
     if (!text || loading) return;
 
-    setMessages(prev => [...prev, { role: "user", text }]);
+    // 編集モードの場合：その以降のメッセージを削除して再送
+    const baseMessages = editingIndex !== null
+      ? messages.slice(0, editingIndex)
+      : messages;
+
+    setMessages([...baseMessages, { role: "user", text }]);
     setInput("");
+    setEditingIndex(null);
     setLoading(true);
 
     try {
@@ -78,10 +114,20 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
 
   return (
     <div className="max-w-2xl mx-auto flex flex-col" style={{ height: "calc(100vh - 180px)" }}>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs text-slate-500">{messages.length - 1} 件の履歴</span>
+        <button
+          onClick={handleClear}
+          className="text-xs text-slate-500 hover:text-red-400 transition px-2 py-1 rounded-lg hover:bg-red-500/10"
+        >
+          履歴をクリア
+        </button>
+      </div>
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-1">
         {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+          <div key={i} className={`flex group ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             {msg.role === "assistant" && (
               <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
                 style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)" }}>
@@ -92,16 +138,30 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
               </div>
             )}
             <div className={`max-w-[80%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col gap-2`}>
-              <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                msg.role === "user"
-                  ? "text-white rounded-tr-sm"
-                  : "text-slate-200 border border-white/8 rounded-tl-sm"
-              }`}
-                style={msg.role === "user"
-                  ? { background: "linear-gradient(135deg,#6366f1,#8b5cf6)" }
-                  : { background: "rgba(20,27,45,0.9)" }
-                }>
-                {msg.text}
+              <div className="flex items-end gap-1.5">
+                {msg.role === "user" && (
+                  <button
+                    onClick={() => handleEdit(i)}
+                    className="opacity-0 group-hover:opacity-100 transition p-1 rounded-lg text-slate-600 hover:text-slate-300 hover:bg-white/8 flex-shrink-0 mb-0.5"
+                    title="編集して再送"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                )}
+                <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+                  msg.role === "user"
+                    ? "text-white rounded-tr-sm"
+                    : "text-slate-200 border border-white/8 rounded-tl-sm"
+                } ${editingIndex === i ? "ring-2 ring-violet-500/60" : ""}`}
+                  style={msg.role === "user"
+                    ? { background: "linear-gradient(135deg,#6366f1,#8b5cf6)" }
+                    : { background: "rgba(20,27,45,0.9)" }
+                  }>
+                  {msg.text}
+                </div>
               </div>
 
               {/* Action chips */}
@@ -142,7 +202,15 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
       </div>
 
       {/* Input */}
-      <div className="mt-4 flex gap-2 items-end">
+      {editingIndex !== null && (
+        <div className="flex items-center justify-between mb-1 px-1">
+          <span className="text-xs text-violet-400">編集して再送信</span>
+          <button onClick={handleCancelEdit} className="text-xs text-slate-500 hover:text-slate-300 transition">
+            キャンセル
+          </button>
+        </div>
+      )}
+      <div className="mt-2 flex gap-2 items-end">
         <div className="flex-1 relative">
           <textarea
             ref={inputRef}
@@ -168,7 +236,7 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
       </div>
 
       <p className="text-center text-xs text-slate-600 mt-2">
-        Powered by Gemini 1.5 Flash
+        Powered by Groq / llama-3.1-8b-instant
       </p>
     </div>
   );

@@ -11,9 +11,10 @@ import ChatView from "@/components/ChatView";
 
 // ─── Kanban ───────────────────────────────────────────────────────────────────
 const columns: { status: Status; label: string; dot: string }[] = [
-  { status: "todo",        label: "未着手", dot: "bg-slate-400"  },
-  { status: "in-progress", label: "進行中", dot: "bg-violet-400" },
-  { status: "done",        label: "完了",   dot: "bg-emerald-400"},
+  { status: "todo",        label: "未着手",   dot: "bg-slate-400"  },
+  { status: "in-progress", label: "進行中",   dot: "bg-violet-400" },
+  { status: "waiting",     label: "回答待ち", dot: "bg-amber-400"  },
+  { status: "done",        label: "完了",     dot: "bg-emerald-400"},
 ];
 const dropHighlight: Record<Status, string> = {
   "todo":        "ring-slate-500/50  bg-slate-500/5",
@@ -64,8 +65,10 @@ export default function Home() {
   const [error,   setError]   = useState<string | null>(null);
 
   // ─── UI ─────────────────────────────────────────────────────────────────────
-  const [view,     setView]    = useState<View>("kanban");
-  const [showForm, setShowForm] = useState(false);
+  const [view,            setView]           = useState<View>("kanban");
+  const [showForm,        setShowForm]       = useState(false);
+  const [showArchived,    setShowArchived]   = useState(false);
+  const [archivedTasks,   setArchivedTasks]  = useState<Task[]>([]);
 
   // ─── Kanban ─────────────────────────────────────────────────────────────────
   const [dragOverStatus, setDragOverStatus] = useState<Status | null>(null);
@@ -143,6 +146,18 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadArchivedTasks() {
+    try {
+      const all = await fetchTasks(true);
+      setArchivedTasks(all.filter(t => t.archived));
+    } catch { /* ignore */ }
+  }
+
+  function handleToggleArchived() {
+    if (!showArchived) loadArchivedTasks();
+    setShowArchived(v => !v);
   }
 
   // ─── Handlers ────────────────────────────────────────────────────────────────
@@ -428,7 +443,7 @@ export default function Home() {
             )}
 
             {/* Kanban board */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               {columns.map(({ status, label, dot }) => {
                 const col  = tasksByStatus(status);
                 const isOver = dragOverStatus === status;
@@ -471,7 +486,40 @@ export default function Home() {
                 );
               })}
             </div>
+
           </>
+        )}
+
+        {/* Archive toggle - 全ビュー共通 */}
+        {view !== "chat" && (
+          <div className="mt-8 border-t border-white/5 pt-6">
+            <button
+              onClick={handleToggleArchived}
+              className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-300 transition"
+            >
+              <svg className={`w-4 h-4 transition-transform ${showArchived ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              アーカイブ済み（完了から7日以上）
+              {showArchived && <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700">{archivedTasks.length}</span>}
+            </button>
+
+            {showArchived && (
+              <div className="mt-4 space-y-2">
+                {archivedTasks.length === 0 ? (
+                  <p className="text-xs text-slate-600 pl-1">アーカイブされたタスクはありません</p>
+                ) : (
+                  archivedTasks.map(task => (
+                    <div key={task.id} className="flex items-center justify-between px-4 py-2.5 rounded-xl border border-white/5 text-sm opacity-50"
+                      style={{ background: "rgba(15,20,35,0.7)" }}>
+                      <span className="text-slate-400 line-through">{task.title}</span>
+                      <span className="text-xs text-slate-600">{task.completed_at?.slice(0, 10)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         )}
       </main>
 

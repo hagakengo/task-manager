@@ -32,7 +32,7 @@ export default function FocusView({ tasks, onUpdated, onDeleted, onStartPomodoro
     .filter((t) => {
       if (!t.due_date) return t.priority === "high";
       const diff = getDueDiff(t.due_date);
-      return diff <= 3 || t.priority === "high";
+      return diff <= 0;
     })
     .sort((a, b) => {
       const diffA = a.due_date ? getDueDiff(a.due_date) : 999;
@@ -73,7 +73,7 @@ export default function FocusView({ tasks, onUpdated, onDeleted, onStartPomodoro
           </p>
         </div>
         <div className="text-xs text-slate-500 bg-slate-800/60 border border-white/8 px-3 py-1.5 rounded-lg">
-          期限 3 日以内 ＋ 高優先度
+          今日期限・期限超過のみ
         </div>
       </div>
 

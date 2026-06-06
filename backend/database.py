@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, text
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "tasks.db")
@@ -23,6 +23,8 @@ class Task(Base):
     priority = Column(String, nullable=False, default="medium")
     due_date = Column(String)
     created_at = Column(String, nullable=False, server_default=text("datetime('now', 'localtime')"))
+    completed_at = Column(String)
+    archived = Column(Boolean, nullable=False, default=False)
 
 
 def get_db():

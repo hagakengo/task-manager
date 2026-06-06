@@ -8,8 +8,8 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
 @router.get("", response_model=list[TaskResponse])
-def get_tasks(db: Session = Depends(get_db)):
-    return services.get_all_tasks(db)
+def get_tasks(include_archived: bool = False, db: Session = Depends(get_db)):
+    return services.get_all_tasks(db, include_archived=include_archived)
 
 
 @router.get("/{task_id}", response_model=TaskResponse)

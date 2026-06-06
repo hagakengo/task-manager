@@ -28,3 +28,5 @@ class TaskResponse(BaseModel):
     priority: str
     due_date: Optional[str]
     created_at: str
+    completed_at: Optional[str] = None
+    archived: bool = False
