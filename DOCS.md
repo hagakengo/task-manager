@@ -296,7 +296,7 @@ TaskCard（draggable）
   → onDrop（列側）: taskId を取得 → updateTask(id, { status: 新しい列 })
 ```
 
-### ポモドーロタイマー
+### 作業タイマー
 
 ```
 タスクカードの⏱️ボタン → startPomodoro(task, minutes)
