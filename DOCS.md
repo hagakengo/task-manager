@@ -52,12 +52,14 @@ backend/
 ```python
 load_dotenv(dotenv_path=os.path.expanduser("~/task-manager-backend/.env"))
 ```
-起動時に `.env` ファイルを読み込み、`GROQ_API_KEY` などの環境変数をセットします。
+起動時に `~/task-manager-backend/.env` を読み込み `GROQ_API_KEY` をセットします。
+パスはホームディレクトリ直下の別フォルダを指しているため、EC2上での手動管理が前提です。
 
 ```python
-app.add_middleware(CORSMiddleware, allow_origins=[...])
+app.add_middleware(CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://18.181.247.4:3000"])
 ```
-CORS（クロスオリジンリソース共有）の設定。フロントエンド（別のポート）からのアクセスを許可します。
+ローカル開発用とEC2の固定IPを明示的に許可しています。
 
 ```python
 app.include_router(tasks.router)
@@ -70,9 +72,10 @@ app.include_router(chat.router, prefix="/api")
 ### `database.py` - DB定義
 
 ```python
+DB_PATH = os.path.join(os.path.dirname(__file__), "tasks.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 ```
-SQLite への接続を作成します。`check_same_thread=False` は FastAPI の非同期処理で複数スレッドからアクセスするために必要な設定です。
+`tasks.db` はスクリプトと同じディレクトリに生成されます。`check_same_thread=False` は FastAPI の非同期処理で複数スレッドからアクセスするために必要な設定です。
 
 **Task テーブルのカラム:**
 
@@ -84,7 +87,7 @@ SQLite への接続を作成します。`check_same_thread=False` は FastAPI �
 | status | String | todo / in-progress / done / waiting |
 | priority | String | high / medium / low |
 | due_date | String | 期限日（YYYY-MM-DD） |
-| created_at | String | 作成日時（自動セット） |
+| created_at | String | 作成日時（SQLite の `datetime('now','localtime')` で自動セット） |
 | completed_at | String | 完了日時（完了時に自動セット） |
 | archived | Boolean | アーカイブ済みフラグ |
 
@@ -94,7 +97,7 @@ SQLite への接続を作成します。`check_same_thread=False` は FastAPI �
 
 Pydantic を使ってリクエスト・レスポンスの型を定義します。
 
-- **TaskCreate**: タスク作成時に受け取るデータ（title は必須、他は任意）
+- **TaskCreate**: タスク作成時に受け取るデータ（title は必須、status は `"todo"`・priority は `"medium"` がデフォルト）
 - **TaskUpdate**: タスク更新時に受け取るデータ（全て任意、変更したいものだけ送る）
 - **TaskResponse**: APIが返すデータの形（`from_attributes=True` で SQLAlchemy モデルから自動変換）
 
@@ -110,17 +113,21 @@ def auto_archive(db: Session) -> None:
     threshold = (datetime.now() - timedelta(days=7)).strftime(...)
     db.query(Task).filter(
         Task.status == "done",
+        Task.archived == False,
+        Task.completed_at != None,
         Task.completed_at <= threshold,
     ).update({"archived": True})
 ```
 タスク一覧を取得するたびに呼ばれ、完了から7日以上経ったタスクを自動的にアーカイブします。バックグラウンドジョブを使わずリクエスト時に処理する「遅延アーカイブ」方式です。
 
-**完了日時の自動セット:**
+**完了日時の自動セット／リセット:**
 ```python
 if data.get("status") == "done" and db_task.status != "done":
-    data["completed_at"] = datetime.now().strftime(...)
+    data["completed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+elif data.get("status") and data["status"] != "done":
+    data["completed_at"] = None
 ```
-ステータスが `done` に変わった瞬間に `completed_at` を記録します。
+ステータスが `done` に変わった瞬間に `completed_at` を記録し、`done` 以外に戻したときは `None` にリセットします。
 
 ---
 
@@ -130,9 +137,9 @@ if data.get("status") == "done" and db_task.status != "done":
 |---------|------|------|
 | GET | /tasks | タスク一覧取得（`?include_archived=true` でアーカイブ含む） |
 | GET | /tasks/{id} | 特定タスク取得 |
-| POST | /tasks | タスク作成 |
+| POST | /tasks | タスク作成（201 返却） |
 | PUT | /tasks/{id} | タスク更新 |
-| DELETE | /tasks/{id} | タスク削除 |
+| DELETE | /tasks/{id} | タスク削除（204 返却） |
 
 ---
 
@@ -143,11 +150,11 @@ if data.get("status") == "done" and db_task.status != "done":
 ```
 ユーザーのメッセージ
   ↓
-detect_due_date()   # 「この後」「明日」などのキーワードを日付に変換
-  ↓
-build_prompt()      # 現在のタスク一覧 + メッセージ → AIへの指示文を生成
+build_prompt()      # 現在のタスク一覧（done除く）+ メッセージ → AIへの指示文を生成
   ↓
 Groq API 呼び出し   # llama-3.1-8b-instant がJSON形式で応答
+  ↓
+detect_due_date()   # AIの due_date が空の場合のフォールバック用に日付を検出
   ↓
 actions の実行      # create / complete / update をDBに反映
   ↓
@@ -155,15 +162,29 @@ actions の実行      # create / complete / update をDBに反映
 ```
 
 **`detect_due_date()`:**
-AIに頼らずバックエンド側でキーワードを検出して日付に変換します。AIモデルが日付変換を忘れることがあるためサーバー側で確実に処理します。
+AIが `due_date` を設定し忘れた場合のフォールバックとして使います。キーワードを検出して日付を返します。
 
 ```python
-if re.search(r'この後|今日中|今夜|今から|あとで|後で|今日', message):
+if re.search(r'この後|今日中|今夜|今から|あとで|後で|今日|今晩|今夜中', message):
     return str(today)
+if re.search(r'明日|明日中|あす', message):
+    return str(tomorrow)
+if re.search(r'今週中|今週末|今週', message):
+    return str(next_week)
 ```
 
+`create` アクション実行時は `action.get("due_date") or detected_due` でAIの値を優先し、なければフォールバックを使います。
+
 **`build_prompt()`:**
-AIへの指示文を組み立てます。今日の日付・タスク一覧・出力形式（JSON）・ルールを含めます。AIは必ずJSON形式で返答するよう指示されています。
+AIへの指示文を組み立てます。今日の日付・タスク一覧（未完了のみ）・出力形式（JSON）・日付変換ルール・アクションルールを含めます。AIは必ずJSON形式で返答するよう指示されています。
+
+**コードフェンス除去:**
+```python
+if text.startswith("```"):
+    lines = text.split("\n")
+    text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
+```
+AIがMarkdownのコードブロックで囲んで返してきた場合に除去します。
 
 ---
 
@@ -174,11 +195,10 @@ AIへの指示文を組み立てます。今日の日付・タスク一覧・出
 ```
 frontend/
 ├── app/
-│   ├── page.tsx         # メインページ（状態管理・ビュー切り替え）
+│   ├── page.tsx         # メインページ（状態管理・ビュー切り替え・カンバン）
 │   ├── layout.tsx       # HTMLの外枠
 │   └── globals.css      # グローバルスタイル
 ├── components/
-│   ├── KanbanBoard      # ※ page.tsx に内包
 │   ├── FocusView.tsx    # フォーカスビュー
 │   ├── CalendarView.tsx # カレンダービュー
 │   ├── ChatView.tsx     # AIチャットビュー
@@ -196,8 +216,10 @@ frontend/
 バックエンドとの通信を一元管理します。
 
 ```typescript
-const API_BASE = "";  // 相対パス（EC2では同一サーバーのため）
+const API_BASE = "http://localhost:8000";
 ```
+
+ローカル・EC2どちらもこの値のまま動きます（EC2ではnginxがポート80→8000に転送）。
 
 `fetchTasks(includeArchived)` / `createTask()` / `updateTask()` / `deleteTask()` / `sendChatMessage()` の関数を提供します。全て `fetch` を使った非同期関数です。
 
@@ -205,18 +227,39 @@ const API_BASE = "";  // 相対パス（EC2では同一サーバーのため）
 
 ### `app/page.tsx` - メインページ
 
-アプリ全体の状態を管理するルートコンポーネントです。
+アプリ全体の状態を管理するルートコンポーネントです。カンバンボードの描画もここに含まれます。
 
 **主な状態（useState）:**
 
 | 状態 | 型 | 説明 |
 |------|----|------|
-| tasks | Task[] | 全タスクデータ |
+| tasks | Task[] | 全タスクデータ（アーカイブ除く） |
 | view | "kanban" / "focus" / "calendar" / "chat" | 現在のビュー |
-| pomTask | Task \| null | ポモドーロ対象タスク |
+| searchQuery | string | タイトル・説明文の検索ワード |
+| sortKey | "created_at" / "due_date" / "priority" / "title" | ソートキー |
+| sortDir | "asc" / "desc" | ソート方向 |
+| filterPriority | Priority / "all" | 優先度フィルター |
+| filterOverdue | boolean | 期限切れのみ表示フラグ |
+| pendingDelete | { task, timerId } / null | Undo削除の保留状態 |
+| pomTask | Task / null | ポモドーロ対象タスク |
 | pomState | "idle" / "working" / "break" | タイマー状態 |
 | pomSeconds | number | 残り秒数 |
+| pomWorkSecs | number | 作業時間（分単位で可変） |
+| pomCycles | number | 完了したポモドーロ回数 |
 | showArchived | boolean | アーカイブ表示フラグ |
+
+**統計バー（カンバンビューのみ）:**
+未着手・進行中・完了・期限切れの件数と完了率プログレスバーを表示します。
+
+**Undo削除:**
+```typescript
+function handleDeleteRequested(task: Task) {
+    setTasks(prev => prev.filter(t => t.id !== task.id));
+    const timerId = setTimeout(() => { deleteTask(task.id); setPendingDelete(null); }, 5000);
+    setPendingDelete({ task, timerId });
+}
+```
+削除ボタン押下時はUIからのみ即座に除去し、5秒後に実際のAPIを呼び出します。5秒以内に「元に戻す」を押すと `clearTimeout` でキャンセルできます。
 
 **カンバンのドラッグ＆ドロップ:**
 ```typescript
@@ -233,10 +276,13 @@ function handleDrop(e: React.DragEvent, status: Status) {
 
 カンバンボードに表示される個々のタスクカードです。
 
-- **優先度バー**: カード左端の細い縦線（赤=高、黄=中、グレー=低）
-- **期限バッジ**: 期限まであと何日かを計算して表示。超過は赤、当日はオレンジ
+- **優先度バー**: カード左端の細い縦線（赤=高、橙=中、グレー=低）
+- **期限バッジ**: 期限まであと何日かを計算して表示。超過は赤、当日はオレンジ、3日以内は黄色
 - **完了日バッジ**: `status === "done"` かつ `completed_at` がある場合に表示
+- **クイックステータスボタン**: 「着手する →」（todo→in-progress）/ 「完了にする ✓」（in-progress→done）
+- **チェックボックス**: クリックで done ↔ todo をトグル
 - **ドラッグ**: `draggable` 属性と `onDragStart` でIDを `dataTransfer` に格納
+- **ポモドーロボタン**: 時間プリセット（5 / 15 / 25 / 50 分）のピッカーを表示して起動
 
 ---
 
@@ -284,6 +330,14 @@ function handleEdit(index: number) {
 
 ヘッダーに常駐する横長バーのタイマーです。`state === "idle"` のときは `return null` で非表示になります。
 
+**タイマー遷移:**
+```
+working（作業中, 任意の分数）
+  → 0秒でブラウザ通知 → break（休憩, 5分）
+  → 0秒でブラウザ通知 → idle（終了）
+```
+作業時間はタスクカードのプリセット（5 / 15 / 25 / 50 分）で選択します。ブラウザ通知は `Notification.requestPermission()` で許可を求め、許可済みの場合のみ発火します。
+
 ---
 
 ## 主要機能の仕組み
@@ -296,13 +350,24 @@ TaskCard（draggable）
   → onDrop（列側）: taskId を取得 → updateTask(id, { status: 新しい列 })
 ```
 
-### 作業タイマー
+### ポモドーロタイマー
 
 ```
-タスクカードの⏱️ボタン → startPomodoro(task, minutes)
-  → pomState: "idle" → "working"
-  → useEffect で1秒ごとに pomSeconds を減算
-  → 0になったら "working" → "break" → "idle" と自動遷移
+タスクカードの⏱️ → 時間プリセット選択（5/15/25/50分）
+  → startPomodoro(task, minutes)
+    → pomState: "idle" → "working"
+    → useEffect で1秒ごとに pomSeconds を減算
+    → 0になったら "working" → "break" → "idle" と自動遷移
+    → 各フェーズ完了時にブラウザ通知（許可済みの場合）
+    → pomCycles で完了セット数をカウント
+```
+
+### Undo削除
+
+```
+削除ボタン → UIから即座に除外 → 5秒タイマー開始
+  → 5秒以内に「元に戻す」: clearTimeout → tasks に再追加
+  → 5秒経過: deleteTask(id) でDBから削除
 ```
 
 ### 自動アーカイブ
@@ -319,9 +384,9 @@ GET /tasks リクエスト
 ```
 ユーザー入力 → sendChatMessage()
   → POST /api/chat
-    → detect_due_date()（キーワード→日付変換）
-    → build_prompt()（タスク一覧+指示をAIに送信）
-    → Groq API → JSON応答
+    → build_prompt()（未完了タスク一覧+指示をAIに送信）
+    → Groq API → JSON応答（コードフェンスは自動除去）
+    → detect_due_date()（AIが due_date を省略した場合のフォールバック）
     → actions をDBに反映（create/complete/update）
   → onTasksChanged() → loadTasks() でカンバン再描画
 ```
@@ -358,7 +423,7 @@ sudo systemctl restart task-manager-backend
 
 ### 注意事項
 
-- EC2 を停止→起動するとパブリック IP が変わる（Elastic IP で固定可能）
-- `.env` は Git に含まれないため、サーバー上で手動管理
+- EC2 を停止→起動するとパブリック IP が変わる（Elastic IP で固定可能）。IPが変わると `main.py` の CORS 設定と `lib/api.ts` の `API_BASE` も更新が必要
+- `.env` は Git に含まれないため、サーバー上（`~/task-manager-backend/.env`）で手動管理
 - SQLite のデータは EC2 上に保存。インスタンス削除でデータも消える
 - t2.micro は RAM 1GB のため、Next.js ビルドに 1GB スワップが必要
