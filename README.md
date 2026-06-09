@@ -28,9 +28,15 @@ AIチャットで自然言語からタスクを操作できるタスク管理Web
 ```bash
 cd backend
 pip install -r requirements.txt
-cp .env.example .env  # GROQ_API_KEY を設定
 uvicorn main:app --reload
 ```
+
+> **注意:** `.env` はリポジトリ外の `~/task-manager-backend/.env` に置く必要があります。
+> 以下の内容で手動作成してください。
+> ```
+> GROQ_API_KEY=your_groq_api_key_here
+> ```
+> Groq API キーの取得: https://console.groq.com
 
 ### フロントエンド
 
