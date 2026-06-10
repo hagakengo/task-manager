@@ -10,12 +10,18 @@ import PomodoroTimer from "@/components/PomodoroTimer";
 import ChatView from "@/components/ChatView";
 
 // ─── Kanban ───────────────────────────────────────────────────────────────────
+
+// カンバン列の定義。status は API の値と一致させる必要がある。
+// dot は列ヘッダーの色ドット。
 const columns: { status: Status; label: string; dot: string }[] = [
   { status: "todo",        label: "未着手",   dot: "bg-slate-400"  },
   { status: "in-progress", label: "進行中",   dot: "bg-violet-400" },
   { status: "waiting",     label: "回答待ち", dot: "bg-amber-400"  },
   { status: "done",        label: "完了",     dot: "bg-emerald-400"},
 ];
+
+// ドロップ時のハイライトスタイルを列ごとに定義する。
+// Record<Status, string> にすることで全ステータスの定義漏れを型で検出できる。
 const dropHighlight: Record<Status, string> = {
   "todo":        "ring-slate-500/50  bg-slate-500/5",
   "in-progress": "ring-violet-500/50 bg-violet-500/5",
@@ -37,6 +43,7 @@ const sortOptions: { key: SortKey; label: string }[] = [
   { key: "priority",   label: "優先度"   },
   { key: "title",      label: "タイトル" },
 ];
+// 優先度を数値にマッピングして sort の比較に使う。
 const priorityRank: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
 // ─── Pomodoro ─────────────────────────────────────────────────────────────────
@@ -49,7 +56,6 @@ function isOverdue(task: Task) {
   return new Date(task.due_date) < today;
 }
 
-// ─── View tabs ────────────────────────────────────────────────────────────────
 type View = "kanban" | "focus" | "calendar" | "chat";
 const views: { key: View; label: string; icon: string }[] = [
   { key: "kanban",   label: "カンバン",     icon: "M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" },
@@ -70,7 +76,6 @@ export default function Home() {
   const [showArchived,    setShowArchived]   = useState(false);
   const [archivedTasks,   setArchivedTasks]  = useState<Task[]>([]);
 
-  // ─── Kanban ─────────────────────────────────────────────────────────────────
   const [dragOverStatus, setDragOverStatus] = useState<Status | null>(null);
 
   // ─── Search / Sort / Filter ─────────────────────────────────────────────────
@@ -81,6 +86,9 @@ export default function Home() {
   const [filterOverdue,  setFilterOverdue]  = useState(false);
 
   // ─── Undo delete ────────────────────────────────────────────────────────────
+  // pendingDelete は「削除予約中」の状態。
+  // タスクは UI からは即座に消えているが、実際の API 呼び出しは5秒後。
+  // timerId を保持することで「元に戻す」時に clearTimeout でキャンセルできる。
   const [pendingDelete, setPendingDelete] = useState<{
     task: Task; timerId: ReturnType<typeof setTimeout>;
   } | null>(null);
@@ -91,16 +99,22 @@ export default function Home() {
   const [pomSeconds, setPomSeconds] = useState(WORK_SECS);
   const [pomWorkSecs,setPomWorkSecs]= useState(WORK_SECS);
   const [pomCycles,  setPomCycles]  = useState(0);
+  // useRef で通知の二重発火を防ぐフラグを管理する。
+  // useState にすると state 更新が非同期になるため、同期的に参照できる ref を使う。
   const pomNotified = useRef(false);
 
-  // Pomodoro tick
+  // ポモドーロのカウントダウン。
+  // pomState が "idle" のときは interval を作らない（early return）。
   useEffect(() => {
     if (pomState === "idle") return;
     const id = setInterval(() => setPomSeconds(s => (s > 0 ? s - 1 : 0)), 1000);
+    // クリーンアップ関数で interval をクリアする。
+    // pomState が変わるたびに古い interval を止めて新しく作り直す。
     return () => clearInterval(id);
   }, [pomState]);
 
-  // Pomodoro transitions
+  // pomSeconds が 0 になったときのフェーズ遷移。
+  // 別の useEffect に分けることで「カウントダウン」と「状態遷移」の責務を分離している。
   useEffect(() => {
     if (pomSeconds !== 0 || pomState === "idle") return;
     if (!pomNotified.current) {
@@ -109,6 +123,8 @@ export default function Home() {
         new Notification(pomState === "working" ? "🎉 休憩タイム！" : "💪 作業を再開しよう！");
       }
     }
+    // 800ms 待ってからフェーズを切り替える。
+    // 即座に切り替えると「00:00」が一瞬で消えてしまうため、ユーザーが認識できるよう待つ。
     const timer = setTimeout(() => {
       pomNotified.current = false;
       if (pomState === "working") {
@@ -124,6 +140,8 @@ export default function Home() {
   }, [pomSeconds, pomState]);
 
   function startPomodoro(task: Task, minutes = 25) {
+    // 初回起動時にブラウザの通知許可を求める。
+    // "default" 状態のときだけ表示し、すでに "granted" / "denied" なら何もしない。
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
@@ -150,12 +168,15 @@ export default function Home() {
 
   async function loadArchivedTasks() {
     try {
+      // include_archived=true で全タスクを取得し、フロントで archived=true だけ絞り込む。
       const all = await fetchTasks(true);
       setArchivedTasks(all.filter(t => t.archived));
     } catch { /* ignore */ }
   }
 
   function handleToggleArchived() {
+    // アーカイブを開くときだけ取得する（初回のみ）。
+    // 既に開いている場合は再取得しない。
     if (!showArchived) loadArchivedTasks();
     setShowArchived(v => !v);
   }
@@ -163,20 +184,25 @@ export default function Home() {
   // ─── Handlers ────────────────────────────────────────────────────────────────
   async function handleCreate(data: import("@/lib/api").TaskCreate | import("@/lib/api").TaskUpdate) {
     const t = await createTask(data as import("@/lib/api").TaskCreate);
+    // 作成後に全件再取得せず、先頭に追加するだけにすることで画面のちらつきを防ぐ。
     setTasks(prev => [t, ...prev]);
     setShowForm(false);
   }
 
   function handleUpdated(updated: Task) {
+    // 更新されたタスクだけ差し替える。他のタスクはそのまま保持する。
     setTasks(prev => prev.map(t => t.id === updated.id ? updated : t));
   }
 
   function handleDeleteRequested(task: Task) {
+    // 前の削除予約が残っている場合は即座に確定させる。
     if (pendingDelete) {
       clearTimeout(pendingDelete.timerId);
       deleteTask(pendingDelete.task.id);
     }
+    // UI からは即座に除外する（楽観的UI更新）。
     setTasks(prev => prev.filter(t => t.id !== task.id));
+    // 5秒後に実際に削除する。
     const timerId = setTimeout(() => { deleteTask(task.id); setPendingDelete(null); }, 5000);
     setPendingDelete({ task, timerId });
   }
@@ -184,6 +210,7 @@ export default function Home() {
   function handleUndoDelete() {
     if (!pendingDelete) return;
     clearTimeout(pendingDelete.timerId);
+    // 削除したタスクを先頭に戻す。
     setTasks(prev => [pendingDelete.task, ...prev]);
     setPendingDelete(null);
   }
@@ -192,12 +219,16 @@ export default function Home() {
     e.preventDefault();
     const id = Number(e.dataTransfer.getData("taskId"));
     const task = tasks.find(t => t.id === id);
+    // 同じ列へのドロップは無視する（不要なAPIコールを防ぐ）。
     if (!task || task.status === status) return;
     handleUpdated(await updateTask(id, { status }));
     setDragOverStatus(null);
   }
 
   // ─── Computed ─────────────────────────────────────────────────────────────
+
+  // useMemo で stats を計算する。
+  // tasks が変わらない限り再計算しないため、tasks の変化がないレンダリングでは無駄な計算をしない。
   const stats = useMemo(() => {
     const done   = tasks.filter(t => t.status === "done").length;
     const wip    = tasks.filter(t => t.status === "in-progress").length;
@@ -207,6 +238,9 @@ export default function Home() {
     return { done, wip, todo, overdue, progress };
   }, [tasks]);
 
+  // processedTasks は検索・フィルター・ソートを適用したタスク配列。
+  // useMemo を使う理由：tasks や各フィルター状態が変わったときだけ再計算し、
+  // 無関係な state 変化（showForm など）によるレンダリングでは再計算しない。
   const processedTasks = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     let r = [...tasks];
@@ -216,14 +250,17 @@ export default function Home() {
     r.sort((a, b) => {
       let cmp = 0;
       if      (sortKey === "created_at") cmp = a.created_at.localeCompare(b.created_at);
+      // due_date が null のタスクは "9999" として末尾に並べる。
       else if (sortKey === "due_date")   cmp = (a.due_date ?? "9999").localeCompare(b.due_date ?? "9999");
       else if (sortKey === "priority")   cmp = priorityRank[a.priority] - priorityRank[b.priority];
+      // localeCompare に "ja" を指定することで日本語の文字コード順ではなく辞書順で並ぶ。
       else if (sortKey === "title")      cmp = a.title.localeCompare(b.title, "ja");
       return sortDir === "asc" ? cmp : -cmp;
     });
     return r;
   }, [tasks, searchQuery, filterPriority, filterOverdue, sortKey, sortDir]);
 
+  // フィルターが何か適用されているかを表すフラグ。「クリア」ボタンの表示判定に使う。
   const isFiltered = searchQuery.trim() || filterPriority !== "all" || filterOverdue;
   const tasksByStatus = (s: Status) => processedTasks.filter(t => t.status === s);
 
@@ -231,7 +268,7 @@ export default function Home() {
   return (
     <div className="min-h-screen" style={{ background: "linear-gradient(135deg,#080c14 0%,#0d1220 50%,#080c14 100%)" }}>
 
-      {/* Header */}
+      {/* sticky top-0 でスクロールしてもヘッダーが常に画面上部に固定される */}
       <header className="border-b border-white/5 backdrop-blur-sm sticky top-0 z-30"
         style={{ background: "rgba(8,12,20,0.9)" }}>
         <div className="max-w-7xl mx-auto px-6 py-3">
@@ -280,7 +317,7 @@ export default function Home() {
             </button>
           </div>
         </div>
-        {/* Pomodoro bar — shown below main header row when active */}
+        {/* ポモドーロタイマーはヘッダー内に配置。idle のときは自身で null を返す */}
         <PomodoroTimer
           state={pomState}
           secondsLeft={pomSeconds}
@@ -307,7 +344,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Stats (kanban only) */}
+        {/* 統計バーはカンバンビューかつタスクがあるときだけ表示する */}
         {!loading && tasks.length > 0 && view === "kanban" && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
@@ -334,7 +371,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* Modal */}
+        {/* タスク作成モーダル。fixed + backdrop-filter でオーバーレイを実現する */}
         {showForm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
             style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}>
@@ -378,7 +415,7 @@ export default function Home() {
         ) : (
           /* Kanban */
           <>
-            {/* Toolbar */}
+            {/* Toolbar: 検索・ソート・フィルターをまとめたエリア */}
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-3">
                 <div className="relative flex-1 min-w-48">
@@ -398,6 +435,7 @@ export default function Home() {
                     </button>
                   )}
                 </div>
+                {/* ソートキー切り替え。同じキーを押すと昇順/降順をトグルする */}
                 <div className="flex items-center gap-1 bg-slate-800/60 border border-white/8 rounded-lg p-1">
                   {sortOptions.map(({ key, label }) => (
                     <button key={key}
@@ -461,6 +499,7 @@ export default function Home() {
                         {col.length}
                       </span>
                     </div>
+                    {/* ドロップ中は ring でハイライトする */}
                     <div className={`flex flex-col gap-3 flex-1 min-h-32 rounded-xl p-2 border-2 transition-all duration-150 ${
                       isOver ? `ring-2 ${dropHighlight[status]} border-transparent` : "border-transparent"
                     }`}>
@@ -490,7 +529,7 @@ export default function Home() {
           </>
         )}
 
-        {/* Archive toggle - 全ビュー共通 */}
+        {/* アーカイブトグルはチャット以外の全ビューで表示する */}
         {view !== "chat" && (
           <div className="mt-8 border-t border-white/5 pt-6">
             <button
@@ -523,7 +562,7 @@ export default function Home() {
         )}
       </main>
 
-      {/* Undo toast */}
+      {/* Undo トースト。fixed で画面下部中央に固定。5秒プログレスバー付き */}
       {pendingDelete && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-xl border border-white/10 shadow-2xl text-sm"
           style={{ background: "rgba(20,27,45,0.97)", backdropFilter: "blur(12px)" }}>
@@ -534,6 +573,7 @@ export default function Home() {
             className="px-3 py-1 rounded-lg font-medium text-violet-300 border border-violet-500/40 hover:bg-violet-500/15 transition">
             元に戻す
           </button>
+          {/* 5秒で縮む進捗バー。CSS animation の shrink を globals.css で定義している */}
           <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-b-xl overflow-hidden">
             <div className="h-full bg-violet-500 animate-[shrink_5s_linear_forwards]" />
           </div>

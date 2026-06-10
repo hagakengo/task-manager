@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Task, TaskUpdate, updateTask, Status } from "@/lib/api";
 import TaskForm from "./TaskForm";
 
+// ポモドーロの時間プリセット（分）。
+// カードのボタンから選択できる。25分以外も選べることで短いタスクにも対応できる。
 const DURATION_PRESETS = [5, 15, 25, 50];
 
 interface Props {
@@ -28,6 +30,8 @@ const statusStyle: Record<string, string> = {
   waiting:       "text-amber-300  bg-amber-900/30  border-amber-700/40",
 };
 
+// bar: カード左端の優先度ライン、badge: バッジの色、label: 表示テキスト。
+// オブジェクトにまとめることで優先度ごとのスタイルを一箇所で管理できる。
 const priorityStyle: Record<string, { bar: string; badge: string; label: string }> = {
   high:   { bar: "bg-red-500",    badge: "text-red-300   bg-red-900/30   border-red-700/40",    label: "高" },
   medium: { bar: "bg-amber-400",  badge: "text-amber-300 bg-amber-900/30 border-amber-700/40",  label: "中" },
@@ -37,9 +41,12 @@ const priorityStyle: Record<string, { bar: string; badge: string; label: string 
 export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, isPomodoro }: Props) {
   const [editing, setEditing] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // showDurationPicker: ポモドーロの時間選択ピッカーの表示状態。
   const [showDurationPicker, setShowDurationPicker] = useState(false);
 
   function handleDragStart(e: React.DragEvent) {
+    // dataTransfer でドラッグ中のタスクIDを運ぶ。
+    // ドロップ先（カンバン列）が onDrop で取り出してステータス更新に使う。
     e.dataTransfer.setData("taskId", String(task.id));
     e.dataTransfer.effectAllowed = "move";
     setDragging(true);
@@ -57,11 +64,15 @@ export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, 
   }
 
   function handleDelete() {
+    // 実際の削除は親（page.tsx）の handleDeleteRequested で行う。
+    // 5秒間 Undo できる仕組みも親が管理している。
     onDeleted(task);
   }
 
   const { bar, badge, label: priorityLabel } = priorityStyle[task.priority];
 
+  // 期限バッジの計算。完了タスクには表示しない。
+  // IIFE（即時実行関数）で計算を閉じ込め、変数を外に漏らさない。
   const dueDateInfo = (() => {
     if (!task.due_date || task.status === "done") return null;
     const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -73,6 +84,8 @@ export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, 
     return { text: `あと ${diff} 日`, cls: "text-slate-500 bg-transparent border-slate-700/40", icon: null };
   })();
 
+  // 編集モード時はカード全体をフォームに差し替える。
+  // 別モーダルを開かず in-place で編集できるのでUIが自然。
   if (editing) {
     return (
       <div className="rounded-xl border border-white/10 p-4" style={{ background: "rgba(15,20,35,0.9)" }}>
@@ -90,7 +103,7 @@ export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, 
         dragging
           ? "opacity-40 scale-95"
           : task.status === "done"
-          ? "opacity-50"
+          ? "opacity-50"      // 完了タスクは薄く表示して視覚的に区別する
           : "hover:border-white/15 hover:-translate-y-0.5 hover:shadow-lg"
       }`}
       style={{
@@ -100,13 +113,13 @@ export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, 
         boxShadow: dragging ? "none" : "0 2px 16px rgba(0,0,0,0.3)",
       }}
     >
-      {/* Priority left bar */}
+      {/* 優先度を示す左端の縦ライン。absolute で配置してカードのパディングに影響しない */}
       <div className={`absolute left-0 top-3 bottom-3 w-0.5 rounded-r-full ${bar}`} />
 
       <div className="pl-2">
-        {/* Title row */}
         <div className="flex items-start justify-between gap-2 mb-3">
           <div className="flex items-start gap-2.5 flex-1 min-w-0">
+            {/* チェックボックス: クリックで done ↔ todo をトグルする */}
             <button
               onClick={() => handleStatusChange(task.status === "done" ? "todo" : "done")}
               className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded border transition-all ${
@@ -135,9 +148,8 @@ export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, 
             </div>
           </div>
 
-          {/* Actions */}
+          {/* アクションボタン群: group-hover で親にホバーしたときだけ表示する */}
           <div className="relative flex gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-            {/* Pomodoro button */}
             {onStartPomodoro && (
               <div className="relative">
                 <button
@@ -151,6 +163,7 @@ export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, 
                 >
                   ⏱️
                 </button>
+                {/* 時間プリセットのドロップダウン */}
                 {showDurationPicker && (
                   <div className="absolute right-0 top-8 z-20 rounded-xl border border-white/10 p-2 shadow-xl flex flex-col gap-1 w-24"
                     style={{ background: "rgba(15,20,35,0.98)" }}>
@@ -210,6 +223,7 @@ export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, 
               {dueDateInfo.text}
             </span>
           )}
+          {/* 完了日は done かつ completed_at がある場合のみ表示する */}
           {task.status === "done" && task.completed_at && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs border text-slate-500 bg-transparent border-slate-700/40">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -220,7 +234,9 @@ export default function TaskCard({ task, onUpdated, onDeleted, onStartPomodoro, 
           )}
         </div>
 
-        {/* Quick status buttons */}
+        {/* クイックステータスボタン: 完了タスクには表示しない。
+            todo → in-progress と in-progress → done の1ステップだけ提供する。
+            ドラッグより素早く状態を進めるための補助機能。 */}
         {task.status !== "done" && (
           <div className="flex gap-2 mt-3 pt-3 border-t border-white/5">
             {task.status === "todo" && (

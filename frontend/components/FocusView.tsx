@@ -18,6 +18,9 @@ const priorityBar: Record<string, string> = {
   low:    "bg-slate-600",
 };
 
+// 今日との差分を日数で返す関数（負の値 = 期限超過）。
+// setHours(0,0,0,0) で時刻を0にそろえることで「日付のみ」で比較できる。
+// ミリ秒の差を 86400000（1日のms）で割ることで日数を求める。
 function getDueDiff(dueDate: string) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const due   = new Date(dueDate); due.setHours(0, 0, 0, 0);
@@ -29,6 +32,9 @@ export default function FocusView({ tasks, onUpdated, onDeleted, onStartPomodoro
 
   const focusTasks = tasks
     .filter((t) => t.status !== "done")
+    // フォーカスビューに表示するタスクの条件：
+    // - due_date がある場合: 今日以前（diff <= 0）のもの
+    // - due_date がない場合: 優先度が high のもの（期限なしでも緊急なタスクを拾うため）
     .filter((t) => {
       if (!t.due_date) return t.priority === "high";
       const diff = getDueDiff(t.due_date);
@@ -37,12 +43,20 @@ export default function FocusView({ tasks, onUpdated, onDeleted, onStartPomodoro
     .sort((a, b) => {
       const diffA = a.due_date ? getDueDiff(a.due_date) : 999;
       const diffB = b.due_date ? getDueDiff(b.due_date) : 999;
+      // urgency スコアの計算：
+      // - 超過タスク（diff < 0）は -1000 に diff を加算して最上位に来るようにする。
+      //   例：3日超過なら -1003、1日超過なら -1001（より超過しているほど上）
+      // - 今日期限（diff === 0）は 0
+      // - 期限なし（999）は最後
       const urgencyA = diffA < 0 ? -1000 + diffA : diffA <= 0 ? 0 : diffA;
       const urgencyB = diffB < 0 ? -1000 + diffB : diffB <= 0 ? 0 : diffB;
       if (urgencyA !== urgencyB) return urgencyA - urgencyB;
+      // 緊急度が同じ場合は優先度で並べる
       return priorityRank[a.priority] - priorityRank[b.priority];
     });
 
+  // 推定時間はポモドーロ1セット（25分）× タスク数で計算する。
+  // 60分以上の場合は時間と分で表示する。
   const estimatedMins = focusTasks.length * 25;
 
   async function handleDone(task: Task) {
@@ -82,6 +96,7 @@ export default function FocusView({ tasks, onUpdated, onDeleted, onStartPomodoro
         {focusTasks.map((task) => {
           const diff = task.due_date ? getDueDiff(task.due_date) : null;
           const isActive = pomodoroTaskId === task.id;
+          // 期限ラベルの計算。null なら表示しない。
           const dueLabel = diff === null ? null
             : diff < 0  ? { text: `${Math.abs(diff)} 日超過`, cls: "text-red-400" }
             : diff === 0 ? { text: "今日期限",           cls: "text-orange-300" }
@@ -102,7 +117,8 @@ export default function FocusView({ tasks, onUpdated, onDeleted, onStartPomodoro
               <div className={`absolute left-0 top-3 bottom-3 w-0.5 rounded-r-full ${priorityBar[task.priority]}`} />
 
               <div className="pl-3 flex items-start gap-3">
-                {/* Checkbox */}
+                {/* チェックボックスをクリックすると即座に done に更新する。
+                    カンバンのドラッグより素早く完了できる。 */}
                 <button
                   onClick={() => handleDone(task)}
                   className="mt-0.5 flex-shrink-0 w-5 h-5 rounded border border-slate-600 hover:border-emerald-400 transition flex items-center justify-center"

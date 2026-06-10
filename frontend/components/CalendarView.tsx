@@ -5,6 +5,8 @@ import { Task } from "@/lib/api";
 
 const DOW = ["日", "月", "火", "水", "木", "金", "土"];
 
+// 優先度・ステータスを色ドットで表現する。
+// Record<string, string> 型で exhaustive なマッピングを定義する。
 const priorityDot: Record<string, string> = {
   high:   "bg-red-400",
   medium: "bg-amber-400",
@@ -21,23 +23,34 @@ interface Props {
   tasks: Task[];
 }
 
+// 数値を2桁の文字列にゼロ埋めするユーティリティ。
+// "2024-01-05" のような ISO 形式の日付文字列を作るために使う。
 function pad(n: number) { return String(n).padStart(2, "0"); }
 
 export default function CalendarView({ tasks }: Props) {
   const today = new Date();
   const [year,  setYear]  = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
+  // 選択中の日付を "YYYY-MM-DD" 文字列で管理する。
+  // Date オブジェクトではなく文字列にすることで、タスクの due_date との比較が単純になる。
   const [selected, setSelected] = useState<string | null>(null);
 
+  // カレンダーのセルを計算する。
+  // new Date(year, month, 1).getDay() で月の初日の曜日（0=日〜6=土）を取得。
+  // new Date(year, month + 1, 0).getDate() で月の末日を取得（0日 = 前月の末日の応用）。
   const firstDow = new Date(year, month, 1).getDay();
   const lastDate = new Date(year, month + 1, 0).getDate();
 
+  // 先頭に null を詰めて曜日がずれないようにし、日付の配列と結合する。
+  // 7の倍数になるよう末尾にも null を追加することで最終週の空白セルを作る。
   const cells: (number | null)[] = [
     ...Array(firstDow).fill(null),
     ...Array.from({ length: lastDate }, (_, i) => i + 1),
   ];
   while (cells.length % 7 !== 0) cells.push(null);
 
+  // タスクを due_date をキーにしたオブジェクトにグループ化する。
+  // ??= は「プロパティが存在しなければ空配列を代入してから push する」短縮記法。
   const tasksByDate: Record<string, Task[]> = {};
   for (const t of tasks) {
     if (t.due_date) {
@@ -45,6 +58,7 @@ export default function CalendarView({ tasks }: Props) {
     }
   }
 
+  // 月の切り替えは1月 → 12月・12月 → 1月のとき年もまたぐ。
   function prevMonth() {
     if (month === 0) { setYear(y => y - 1); setMonth(11); }
     else setMonth(m => m - 1);
@@ -85,7 +99,7 @@ export default function CalendarView({ tasks }: Props) {
             </button>
           </div>
 
-          {/* DOW header */}
+          {/* DOW header — 日曜を赤、土曜を青で表示する慣習に従う */}
           <div className="grid grid-cols-7 mb-2">
             {DOW.map((d, i) => (
               <div key={d} className={`text-center text-xs font-medium py-1 ${i === 0 ? "text-red-400" : i === 6 ? "text-blue-400" : "text-slate-500"}`}>
@@ -101,14 +115,19 @@ export default function CalendarView({ tasks }: Props) {
 
               const dateStr = `${year}-${pad(month + 1)}-${pad(date)}`;
               const dayTasks = tasksByDate[dateStr] ?? [];
+
+              // 今日かどうか・過去かどうかを判定してスタイルを変える。
               const isToday = today.getFullYear() === year && today.getMonth() === month && today.getDate() === date;
               const isPast  = new Date(year, month, date) < new Date(today.getFullYear(), today.getMonth(), today.getDate());
               const isSelected = selected === dateStr;
+
+              // cells 配列内のインデックスと firstDow から曜日を求める。
               const dow = (firstDow + date - 1) % 7;
 
               return (
                 <button
                   key={i}
+                  // 同じ日を再クリックすると選択解除する。
                   onClick={() => setSelected(isSelected ? null : dateStr)}
                   className={`min-h-14 rounded-lg p-1 text-left transition-all border ${
                     isSelected
@@ -118,7 +137,7 @@ export default function CalendarView({ tasks }: Props) {
                       : "border-transparent hover:bg-white/3"
                   }`}
                 >
-                  {/* Date number */}
+                  {/* 今日は紫の丸バッジ、過去は薄く表示 */}
                   <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-medium mb-1 mx-auto ${
                     isToday
                       ? "bg-violet-500 text-white"
@@ -129,7 +148,9 @@ export default function CalendarView({ tasks }: Props) {
                     {date}
                   </div>
 
-                  {/* Task dots */}
+                  {/* タスクがある日はドットで表示する。
+                      最大3件まで表示し、それ以上は "+N" で省略する。
+                      完了タスクは緑ドット、未完了は優先度の色で表示する。 */}
                   {dayTasks.length > 0 && (
                     <div className="flex flex-wrap gap-0.5 justify-center">
                       {dayTasks.slice(0, 3).map((t) => (
@@ -161,11 +182,12 @@ export default function CalendarView({ tasks }: Props) {
           </div>
         </div>
 
-        {/* Side panel */}
+        {/* Side panel — 選択された日のタスク一覧と月次サマリーを表示する */}
         <div className="flex flex-col gap-3">
           {selected ? (
             <>
               <div className="flex items-center justify-between">
+                {/* "YYYY-MM-DD" を "YYYY年MM月DD日" に変換する正規表現 */}
                 <h3 className="text-sm font-medium text-slate-300">
                   {selected.replace(/^(\d+)-(\d+)-(\d+)$/, "$1年$2月$3日")}
                 </h3>
@@ -212,10 +234,12 @@ export default function CalendarView({ tasks }: Props) {
             </div>
           )}
 
-          {/* Monthly summary */}
+          {/* 月次サマリー。mt-auto で常にパネル下部に固定される。
+              IIFE（即時実行関数）でフィルタリング結果を変数に閉じ込め、JSX 内で計算を行う。 */}
           <div className="mt-auto pt-4 border-t border-white/5 space-y-1">
             <p className="text-xs text-slate-500 mb-2">{month + 1}月のサマリー</p>
             {(() => {
+              // due_date が "YYYY-MM" で始まるタスクを当月分として絞り込む。
               const monthTasks = tasks.filter(t => t.due_date?.startsWith(`${year}-${pad(month + 1)}`));
               const done = monthTasks.filter(t => t.status === "done").length;
               return (

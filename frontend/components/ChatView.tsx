@@ -9,6 +9,8 @@ interface Message {
   actions?: ChatResponse["actions_result"];
 }
 
+// アクション結果のラベルとスタイルを定数として定義する。
+// JSX内に直接書くと可読性が下がるため外に切り出す。
 const actionLabel: Record<string, string> = {
   created: "作成",
   completed: "完了",
@@ -28,12 +30,17 @@ const statusLabel: Record<string, string> = {
 };
 
 const STORAGE_KEY = "chat-history";
+// 初回表示メッセージを定数として定義する。
+// 使用例を示すことでユーザーが何を入力すればいいか迷わないようにしている。
 const INITIAL_MESSAGE: Message = {
   role: "assistant",
   text: "こんにちは！タスクについて話しかけてください。\n例：「明日A倉庫でIND930交換」「見積提出完了」「今週のタスクは？」",
 };
 
 export default function ChatView({ onTasksChanged }: { onTasksChanged: () => void }) {
+  // localStorage から履歴を復元する初期化関数を useState に渡す。
+  // 関数を渡すことで初回レンダリング時のみ実行され、毎レンダリングで localStorage を読まずに済む。
+  // try/catch は localStorage が使えない環境（プライベートブラウジング等）への対策。
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -43,15 +50,23 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
     }
   });
   const [input, setInput] = useState("");
+  // editingIndex: 編集中のメッセージのインデックス。null なら通常入力モード。
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // bottomRef はメッセージ一覧の末尾要素への参照。
+  // 新しいメッセージが追加されたときに自動スクロールするために使う。
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // messages が更新されるたびに localStorage に保存する。
+  // ページリロードしても会話履歴が維持される。
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages)); } catch {}
   }, [messages]);
 
+  // メッセージが増えるたびに最下部にスクロールする。
+  // behavior: "smooth" でなめらかにスクロールする。
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -65,6 +80,8 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
   function handleEdit(index: number) {
     setEditingIndex(index);
     setInput(messages[index].text);
+    // setTimeout(..., 0) で次のイベントループサイクルにフォーカスを当てる。
+    // state 更新後に DOM が再レンダリングされるのを待つための慣用パターン。
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -77,7 +94,8 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
     const text = input.trim();
     if (!text || loading) return;
 
-    // 編集モードの場合：その以降のメッセージを削除して再送
+    // 編集モードの場合、editingIndex より後のメッセージを削除して再送信する。
+    // これにより「過去のメッセージを修正して会話をやり直す」UIを実現している。
     const baseMessages = editingIndex !== null
       ? messages.slice(0, editingIndex)
       : messages;
@@ -94,6 +112,8 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
         text: res.reply,
         actions: res.actions_result,
       }]);
+      // create/complete/update が1件でも含まれていればタスク一覧を再取得する。
+      // これによりチャット操作後にカンバンが即座に更新される。
       if (res.actions_result.some(a => ["created", "completed", "updated"].includes(a.action))) {
         onTasksChanged();
       }
@@ -101,11 +121,15 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
       setMessages(prev => [...prev, { role: "assistant", text: "通信エラーが発生しました。" }]);
     } finally {
       setLoading(false);
+      // 送信後に入力欄に自動フォーカスを戻す。
+      // 連続してメッセージを送るときにクリックなしで続けて入力できる。
       inputRef.current?.focus();
     }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    // Enter のみで送信、Shift+Enter で改行。
+    // チャットUIの標準的なキー操作に合わせている。
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -124,9 +148,12 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
           履歴をクリア
         </button>
       </div>
-      {/* Messages */}
+
+      {/* Messages — flex-1 + overflow-y-auto でスクロール可能な領域を作る */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-1">
         {messages.map((msg, i) => (
+          // group クラスを親に付けることで、子要素の group-hover: スタイルが有効になる。
+          // ホバー時にだけ編集ボタンを表示するために使っている。
           <div key={i} className={`flex group ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
             {msg.role === "assistant" && (
               <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
@@ -139,6 +166,8 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
             )}
             <div className={`max-w-[80%] ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col gap-2`}>
               <div className="flex items-end gap-1.5">
+                {/* ユーザーメッセージのみ編集ボタンを表示する。
+                    opacity-0 → group-hover:opacity-100 でホバー時のみ表示される。 */}
                 {msg.role === "user" && (
                   <button
                     onClick={() => handleEdit(i)}
@@ -151,6 +180,7 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
                     </svg>
                   </button>
                 )}
+                {/* 編集中のメッセージは ring で強調表示する */}
                 <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
                   msg.role === "user"
                     ? "text-white rounded-tr-sm"
@@ -164,7 +194,8 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
                 </div>
               </div>
 
-              {/* Action chips */}
+              {/* AIが実行したアクションをチップとして表示する。
+                  タスクのタイトルや変更後のステータスも一緒に見せることで何が起きたかわかる。 */}
               {msg.actions && msg.actions.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {msg.actions.map((a, j) => (
@@ -181,6 +212,8 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
           </div>
         ))}
 
+        {/* ローディング中はドットのバウンスアニメーションを表示する。
+            animationDelay をずらすことで順番に跳ねるアニメーションになる。 */}
         {loading && (
           <div className="flex justify-start">
             <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mr-2"
@@ -198,10 +231,11 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
             </div>
           </div>
         )}
+        {/* このダミー要素に scrollIntoView することで常に最下部を表示する */}
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
+      {/* 編集モード時はインジケーターを表示する */}
       {editingIndex !== null && (
         <div className="flex items-center justify-between mb-1 px-1">
           <span className="text-xs text-violet-400">編集して再送信</span>
@@ -210,6 +244,8 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
           </button>
         </div>
       )}
+
+      {/* Input — textarea を使うことで Shift+Enter で改行できる */}
       <div className="mt-2 flex gap-2 items-end">
         <div className="flex-1 relative">
           <textarea
@@ -225,6 +261,7 @@ export default function ChatView({ onTasksChanged }: { onTasksChanged: () => voi
         </div>
         <button
           onClick={handleSend}
+          // 入力が空または通信中は送信できないよう disabled にする。
           disabled={!input.trim() || loading}
           className="w-11 h-11 rounded-xl flex items-center justify-center text-white transition hover:opacity-90 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
           style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)" }}
